@@ -21,6 +21,10 @@ button:disabled { cursor:not-allowed; opacity:.58; }
 .card h2 { font:700 27px/1.17 "Space Grotesk",sans-serif; letter-spacing:-.04em; margin:8px 0 20px; }
 .start { padding:34px; }
 .start h2 { font-size:34px; }
+.howworks { margin-top:34px; }
+.howworks h2 { font:700 25px "Space Grotesk",sans-serif; letter-spacing:-.04em; margin:0 0 12px; }
+.howworks ol { margin:0; padding-left:24px; line-height:1.55; }
+.howworks li { padding:0 0 10px 5px; }
 label { display:block; font-size:14px; font-weight:800; margin:0 0 15px; }
 input,select,textarea { display:block; width:100%; background:#fff; color:var(--ink); border:1.5px solid #aab7d0; border-radius:9px; outline:none; padding:12px 13px; margin-top:8px; min-height:46px; font-weight:500; }
 textarea { resize:vertical; }
@@ -105,5 +109,9 @@ input:focus,select:focus,textarea:focus { border-color:var(--blue); box-shadow:0
 .done { font-weight:800; font-size:19px; }
 .error { padding:14px 17px; margin-bottom:22px; border:2px solid #b13636; border-radius:9px; background:#fff1ef; color:#8e2222; font-weight:700; }
 footer { color:#6b7790; text-align:center; border-top:1px solid var(--line); padding:30px 0; margin-top:50px; font-size:13px; }
+.footerlink { color:var(--blue); background:none; border:0; text-decoration:underline; font-weight:800; font-size:14px; padding:6px; }
+.hostsetup { max-width:430px; margin:20px auto 0; text-align:left; border:1px solid var(--line); background:#fff; border-radius:12px; padding:22px; }
+.hostsetup h2 { color:var(--ink); font:700 24px "Space Grotesk",sans-serif; margin:0 0 16px; }
+.hostsetup .primary { width:100%; }
 @media(max-width:850px) { .gamegrid,.grid2 { grid-template-columns:1fr; } .intro { padding:60px 0; gap:40px; } .intro h1 { max-width:600px; } }
 @media(max-width:560px) { .shell { padding:0 16px; } .mast { height:70px; } .mastnote { display:none; } .intro h1 { font-size:52px; } .intro p { font-size:17px; } .card,.start { padding:20px; box-shadow:3px 4px 0 var(--ink); } .topline { align-items:flex-start; flex-direction:column; padding:27px 0; } .joincontent { flex-direction:column; align-items:flex-start; } .joincontent img { align-self:center; } .choicesform,.answergrid { grid-template-columns:1fr; } .sectionhead { align-items:flex-start; flex-direction:column; } .code { font-size:22px; } }
