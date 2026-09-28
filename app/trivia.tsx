@@ -62,7 +62,7 @@ export default function Trivia() {
     } catch (e) { setError(e instanceof Error ? e.message : "Could not load game."); }
   }, [id, host, team]);
   useEffect(() => { if (!id) return; void load(); const timer = setInterval(() => void load(), 2500); return () => clearInterval(timer); }, [id, load]);
-  useEffect(() => { if (joinUrl) void QRCode.toDataURL(joinUrl, { width: 280, margin: 2, color: { dark: "#281927", light: "#ffffff" } }).then(setQr); }, [joinUrl]);
+  useEffect(() => { if (joinUrl) void QRCode.toDataURL(joinUrl, { width: 280, margin: 2, color: { dark: "#26334f", light: "#ffffff" } }).then(setQr); }, [joinUrl]);
   useEffect(() => {
     setSelected([]); setOrdering(game?.current?.options.map((_, i) => i) || [0, 1, 2, 3]);
     setWritten(""); setBonusAnswer(""); setWager(""); setFinalWager("");
