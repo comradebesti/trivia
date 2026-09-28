@@ -27,6 +27,7 @@ create table if not exists public.teams (
   game_id text not null references public.games(id) on delete cascade,
   name text not null,
   token text not null,
+  bonus_points integer not null default 0,
   created_at bigint not null
 );
 create unique index if not exists teams_game_name on public.teams(game_id, lower(name));

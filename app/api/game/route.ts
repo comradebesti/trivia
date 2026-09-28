@@ -19,7 +19,7 @@ function unwrap<T>(result: { data: T; error: { message: string } | null }): T {
 type Row = Record<string, any>;
 const sortQuestions = (a: Row, b: Row) => stages.indexOf(a.stage) - stages.indexOf(b.stage) || a.position - b.position;
 function exact(q: Row, a: Row) {
-  if (q.kind === "short") return false;
+  if (q.kind === "short") return String(a.choice).trim().replace(/\s+/g, " ").toLocaleLowerCase() === String(q.correct).trim().replace(/\s+/g, " ").toLocaleLowerCase();
   if (q.kind === "number") return Number(a.choice) === Number(q.correct);
   return JSON.stringify(a.choice) === JSON.stringify(q.correct);
 }
@@ -37,7 +37,7 @@ async function read(id: string, hostToken = "", teamToken = "") {
   if (!game) return err("Game not found.", 404);
   const isHost = game.host_token === hostToken && !!hostToken;
   const questions = (unwrap(await client.from("questions").select("*").eq("game_id", id)) as Row[]).sort(sortQuestions);
-  const teams = (unwrap(await client.from("teams").select("id,name,token,created_at").eq("game_id", id).order("created_at")) as Row[]);
+  const teams = (unwrap(await client.from("teams").select("id,name,token,bonus_points,created_at").eq("game_id", id).order("created_at")) as Row[]);
   const ids = questions.map(q => q.id);
   const answers = ids.length ? unwrap(await client.from("answers").select("*").in("question_id", ids)) as Row[] : [];
   const wagers = unwrap(await client.from("final_wagers").select("*").eq("game_id", id)) as Row[];
@@ -46,13 +46,13 @@ async function read(id: string, hostToken = "", teamToken = "") {
   const leaderboard = teams.map(t => {
     const own = answers.filter(a => a.team_id === t.id);
     const score = own.filter(a => isHost || game.phase === "reveal" || a.question_id !== current?.id)
-      .reduce((sum, a) => sum + points(questions.find(q => q.id === a.question_id)!, a), 0);
+      .reduce((sum, a) => sum + points(questions.find(q => q.id === a.question_id)!, a), t.bonus_points || 0);
     const tie = questions.find(q => q.stage === "tiebreaker");
     const tieAnswer = own.find(a => a.question_id === tie?.id);
     const distance = tie && tieAnswer && game.phase === "reveal" ? Math.abs(Number(tieAnswer.choice) - Number(tie.correct)) : null;
-    return { id: t.id, name: t.name, score, distance };
+    return { id: t.id, name: t.name, score, bonusPoints: t.bonus_points || 0, distance };
   }).sort((a, b) => b.score - a.score || (a.distance ?? Infinity) - (b.distance ?? Infinity) || a.name.localeCompare(b.name));
-  const active = current && { id: current.id, position: questions.indexOf(current) + 1, stage: current.stage, kind: current.kind, category: game.phase === "wager" && !isHost ? "" : current.category, prompt: game.phase === "wager" && !isHost ? "" : current.prompt, options: game.phase === "wager" && !isHost ? [] : current.options, points: current.points, ...(isHost || game.phase === "reveal" ? { correct: current.correct } : {}) };
+  const active = current && { id: current.id, position: questions.indexOf(current) + 1, stage: current.stage, kind: current.kind, category: game.phase === "wager" && !isHost ? "" : current.category, prompt: isHost ? current.prompt : "", options: game.phase === "wager" && !isHost ? [] : current.options, points: current.points, ...(isHost || game.phase === "reveal" ? { correct: current.correct } : {}) };
   return json({
     id, title: game.title, phase: game.phase, current: active, activeQuestion: game.active_question,
     questions: isHost ? questions.map((q, i) => ({ ...q, position: i + 1 })) : questions.map(q => ({ id: q.id, stage: q.stage })),
@@ -97,13 +97,13 @@ export async function POST(req: NextRequest) {
     }
     if (b.action === "finalWager") {
       if (game.phase !== "wager") return err("Final wagers are closed.");
-      const t = unwrap(await client.from("teams").select("id").eq("game_id", id).eq("token", clean(b.team, 100)).maybeSingle()) as Row | null;
+      const t = unwrap(await client.from("teams").select("id,bonus_points").eq("game_id", id).eq("token", clean(b.team, 100)).maybeSingle()) as Row | null;
       if (!t) return err("Join a team first.", 403);
       const amount = Number(b.amount);
       if (!Number.isInteger(amount) || amount < 0) return err("Enter a whole-number wager.");
       const q = unwrap(await client.from("questions").select("*").eq("game_id", id)) as Row[];
       const a = unwrap(await client.from("answers").select("*").eq("team_id", t.id)) as Row[];
-      const score = a.reduce((n, answer) => n + points(q.find(x => x.id === answer.question_id)!, answer), 0);
+      const score = a.reduce((n, answer) => n + points(q.find(x => x.id === answer.question_id)!, answer), t.bonus_points || 0);
       if (amount > Math.max(0, score)) return err(`Your wager cannot exceed your ${score} points.`);
       const prior = unwrap(await client.from("final_wagers").select("amount").eq("game_id", id).eq("team_id", t.id).maybeSingle());
       if (prior) return err("Your final wager is already locked in.");
@@ -136,11 +136,26 @@ export async function POST(req: NextRequest) {
     }
     if (b.action === "grade") {
       const answerId = Number(b.answerId), amount = Number(b.points);
-      if (!Number.isInteger(answerId) || !Number.isInteger(amount) || amount < -1000 || amount > 1000) return err("Enter a point adjustment between -1000 and 1000.");
-      const qs = unwrap(await client.from("questions").select("id").eq("game_id", id)) as Row[];
-      if (!qs.length) return err("Question not found.");
-      const result = await client.from("answers").update({ manual_points: amount }).eq("id", answerId).in("question_id", qs.map(q => q.id)).select("id");
+      if (!Number.isSafeInteger(answerId) || !Number.isInteger(amount)) return err("Enter a whole-number point value.");
+      const entry = unwrap(await client.from("answers").select("id,question_id,wager").eq("id", answerId).maybeSingle()) as Row | null;
+      if (!entry) return err("Answer not found.");
+      const q = unwrap(await client.from("questions").select("id,game_id,stage,points").eq("id", entry.question_id).eq("game_id", id).maybeSingle()) as Row | null;
+      if (!q) return err("Answer not found.");
+      const max = q.stage === "round1" || q.stage === "round2" || q.stage === "final" ? entry.wager || 0 : q.stage === "halftime" ? 8 : 0;
+      const min = q.stage === "final" ? -max : 0;
+      if (amount < min || amount > max) return err(`Points for this answer must be between ${min} and ${max}. Use bonus points for anything extra.`);
+      const result = await client.from("answers").update({ manual_points: amount }).eq("id", answerId).select("id");
       if (result.error || !result.data?.length) return err("Answer not found.");
+      return json({ ok: true });
+    }
+    if (b.action === "bonus") {
+      const teamId = clean(b.teamId, 60), amount = Number(b.points);
+      if (!Number.isInteger(amount) || amount < 1 || amount > 1000) return err("Enter 1–1000 bonus points.");
+      const target = unwrap(await client.from("teams").select("id,bonus_points").eq("id", teamId).eq("game_id", id).maybeSingle()) as Row | null;
+      if (!target) return err("Choose a team from this game.");
+      const total = (target.bonus_points || 0) + amount;
+      if (total > 100000) return err("Bonus points limit reached.");
+      unwrap(await client.from("teams").update({ bonus_points: total }).eq("id", teamId).eq("game_id", id));
       return json({ ok: true });
     }
     if (b.action === "add") {
