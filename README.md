@@ -1,16 +1,20 @@
-# Halloween Trivia
+# Team Trivia
 
 A live team trivia game built for phones and a host screen. Each team joins through a QR code. The host writes questions, opens and closes each one, reveals answers, and can correct any team's points.
 
 ## Game format
 
-- **Round one and round two:** Add 5–8 questions per round. If there are six questions, teams can wager 1–6, using each number only once in that round. The available wagers reset for round two. Correct answers earn the wager; incorrect answers earn zero.
+- **Round one and round two:** Add up to six questions per round. With six questions, teams can wager 1–6, using each number only once in that round. The available wagers reset for round two. Correct answers earn the wager; incorrect answers earn zero.
 - **Halftime:** One ordering question with eight items. Each item in the right position earns one point.
 - **Final:** Teams lock in a wager up to their current score before the question appears. A correct answer adds the wager; a wrong answer subtracts it.
 - **Tiebreaker:** An optional closest-number question. It sorts teams tied on points by their distance from the answer after the reveal.
 - **Manual grading:** The host can change the points for any answer, including a misspelled written answer or partial credit.
 
-The host can write single choice, select-all, ordering, and written questions in the main rounds. Team answers and scores are saved in Supabase.
+The host can write single choice, select-all, ordering, and written questions in the main rounds, and give each question an optional category. Team answers and scores are saved in Supabase. The game title can be edited in the lobby.
+
+## Updating an existing trivia project
+
+Run `supabase/add-question-categories.sql` in the existing Supabase project's SQL Editor before deploying the updated code. The statement preserves existing games and questions. It can safely be run again if needed.
 
 ## Set up a separate database
 

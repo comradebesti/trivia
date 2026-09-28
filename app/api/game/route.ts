@@ -52,7 +52,7 @@ async function read(id: string, hostToken = "", teamToken = "") {
     const distance = tie && tieAnswer && game.phase === "reveal" ? Math.abs(Number(tieAnswer.choice) - Number(tie.correct)) : null;
     return { id: t.id, name: t.name, score, distance };
   }).sort((a, b) => b.score - a.score || (a.distance ?? Infinity) - (b.distance ?? Infinity) || a.name.localeCompare(b.name));
-  const active = current && { id: current.id, position: questions.indexOf(current) + 1, stage: current.stage, kind: current.kind, prompt: game.phase === "wager" && !isHost ? "" : current.prompt, options: game.phase === "wager" && !isHost ? [] : current.options, points: current.points, ...(isHost || game.phase === "reveal" ? { correct: current.correct } : {}) };
+  const active = current && { id: current.id, position: questions.indexOf(current) + 1, stage: current.stage, kind: current.kind, category: game.phase === "wager" && !isHost ? "" : current.category, prompt: game.phase === "wager" && !isHost ? "" : current.prompt, options: game.phase === "wager" && !isHost ? [] : current.options, points: current.points, ...(isHost || game.phase === "reveal" ? { correct: current.correct } : {}) };
   return json({
     id, title: game.title, phase: game.phase, current: active, activeQuestion: game.active_question,
     questions: isHost ? questions.map((q, i) => ({ ...q, position: i + 1 })) : questions.map(q => ({ id: q.id, stage: q.stage })),
@@ -81,7 +81,7 @@ export async function POST(req: NextRequest) {
     const b = await req.json() as Record<string, any>, client = db();
     if (b.action === "create") {
       const id = crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase(), host = random();
-      unwrap(await client.from("games").insert({ id, host_token: host, title: clean(b.title, 80) || "Halloween Trivia", created_at: Date.now() }).select("id").single());
+      unwrap(await client.from("games").insert({ id, host_token: host, title: clean(b.title, 80) || "Team Trivia", created_at: Date.now() }).select("id").single());
       return json({ id, host });
     }
     const id = clean(b.game, 12);
@@ -127,6 +127,13 @@ export async function POST(req: NextRequest) {
       return json({ ok: true });
     }
     if (!b.host || game.host_token !== b.host) return err("Host access required.", 403);
+    if (b.action === "rename") {
+      if (game.phase !== "lobby") return err("Change the game title before starting.");
+      const title = clean(b.title, 80);
+      if (!title) return err("Enter a game title.");
+      unwrap(await client.from("games").update({ title }).eq("id", id));
+      return json({ ok: true });
+    }
     if (b.action === "grade") {
       const answerId = Number(b.answerId), amount = Number(b.points);
       if (!Number.isInteger(answerId) || !Number.isInteger(amount) || amount < -1000 || amount > 1000) return err("Enter a point adjustment between -1000 and 1000.");
@@ -138,12 +145,12 @@ export async function POST(req: NextRequest) {
     }
     if (b.action === "add") {
       if (game.phase !== "lobby") return err("Add questions before the game starts.");
-      const stage = clean(b.stage, 20), kind = clean(b.kind, 20), prompt = clean(b.prompt, 300), pts = Number(b.points);
+      const stage = clean(b.stage, 20), kind = clean(b.kind, 20), prompt = clean(b.prompt, 300), category = clean(b.category, 80), pts = Number(b.points);
       if (!stages.includes(stage) || !["single","multiple","order","short","number"].includes(kind) || !prompt) return err("Complete the question and stage.");
       if ((stage === "halftime" && kind !== "order") || (stage === "tiebreaker" && kind !== "number") || (stage === "final" && kind === "number")) return err("Halftime uses ordering; the tiebreaker uses a number.");
       const existing = unwrap(await client.from("questions").select("id,position,stage").eq("game_id", id)) as Row[];
       if (["halftime","final","tiebreaker"].includes(stage) && existing.some(q => q.stage === stage)) return err("There can be one question in this special round.");
-      if (["round1","round2"].includes(stage) && existing.filter(q => q.stage === stage).length >= 8) return err("Each main round can have up to eight questions.");
+      if (["round1","round2"].includes(stage) && existing.filter(q => q.stage === stage).length >= 6) return err("Each main round can have up to six questions.");
       const options = Array.isArray(b.options) ? b.options.map((x: unknown) => clean(x, 140)) : [];
       const expectedLength = stage === "halftime" ? 8 : 4;
       const idx = (x: unknown) => Number.isInteger(x) && Number(x) >= 0 && Number(x) < options.length;
@@ -155,7 +162,7 @@ export async function POST(req: NextRequest) {
           : Array.isArray(answer) && answer.length >= (kind === "multiple" ? 2 : expectedLength) && answer.every(idx) && new Set(answer).size === answer.length && (kind !== "order" || answer.length === expectedLength));
       if (!valid || !Number.isInteger(pts) || pts < 1 || pts > 100) return err("Complete the answer choices and correct answer.");
       const correct = kind === "multiple" ? [...answer].sort((a: number, b: number) => a - b) : kind === "short" ? answer.trim() : kind === "number" ? Number(answer) : answer;
-      unwrap(await client.from("questions").insert({ game_id: id, stage, position: Math.max(0, ...existing.map(q => q.position)) + 1, prompt, kind, options: kind === "short" || kind === "number" ? [] : options, correct, points: stage === "halftime" ? 8 : pts }));
+      unwrap(await client.from("questions").insert({ game_id: id, stage, position: Math.max(0, ...existing.map(q => q.position)) + 1, category, prompt, kind, options: kind === "short" || kind === "number" ? [] : options, correct, points: stage === "halftime" ? 8 : pts }));
       return json({ ok: true });
     }
     if (b.action === "remove") {

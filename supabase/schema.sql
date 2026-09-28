@@ -13,6 +13,7 @@ create table if not exists public.questions (
   game_id text not null references public.games(id) on delete cascade,
   position integer not null,
   stage text not null check (stage in ('round1','halftime','round2','final','tiebreaker')),
+  category text not null default '',
   prompt text not null,
   options jsonb not null default '[]'::jsonb,
   kind text not null check (kind in ('single','multiple','order','short','number')),
