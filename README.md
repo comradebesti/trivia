@@ -7,14 +7,15 @@ A live team trivia game built for phones and a host screen. Each team joins thro
 - **Round one and round two:** Add up to six questions per round. With six questions, teams can wager 1–6, using each number only once in that round. The available wagers reset for round two. Correct answers earn the wager; incorrect answers earn zero.
 - **Halftime:** One ordering question with eight items. Each item in the right position earns one point.
 - **Final:** Teams lock in a wager up to their current score before the question appears. A correct answer adds the wager; a wrong answer subtracts it.
-- **Tiebreaker:** An optional closest-number question. It sorts teams tied on points by their distance from the answer after the reveal.
+- **Tiebreaker:** An optional closest-number question. When revealed, the uniquely closest team among those tied for first receives one point, breaking the tie. If their guesses are equally close, the tie remains.
+- **Attached bonus:** Any question can include an optional numeric bonus worth one point. Set its target and allowed difference, such as a weight within ±100 pounds. Teams enter the bonus number with their main answer; it scores separately from their wager.
 - **Scoring:** Written answers matching the expected answer (ignoring case and extra spaces) earn the wager automatically. The host may correct misspellings or award partial credit, up to the team's wager for that question. Separate bonus points can be added for any team.
 
 The host can write single choice, select-all, ordering, and written questions in the main rounds, and give each question an optional category. Team answers and scores are saved in Supabase. The game title can be edited in the lobby.
 
 ## Updating an existing trivia project
 
-Run `supabase/add-question-categories.sql` and `supabase/add-bonus-points.sql` in the existing Supabase project's SQL Editor before deploying the updated code. The statements preserve existing games, teams, and questions. They can safely be run again if needed.
+Run `supabase/add-question-categories.sql`, `supabase/add-bonus-points.sql`, and `supabase/add-attached-bonus.sql` in the existing Supabase project's SQL Editor before deploying the updated code. The statements preserve existing games, teams, and questions. They can safely be run again if needed.
 
 ## Set up a separate database
 
@@ -41,6 +42,6 @@ For local development, copy `.env.example` to `.env.local`, fill in the values, 
 ## Notes
 
 - The host link is stored in that browser's local storage. Use the same browser to return to your game. Team phones also remember their team.
-- The host sees question prompts and submitted answers. Team phones show answer fields and choices without displaying the question prompt; read or display each question separately. The host may correct scores before or after revealing the answer.
+- The host sees question prompts and submitted answers. Team phones show answer fields and choices without displaying the question prompt; read or display each question separately. The host may correct scores before or after revealing the answer. Answer review and the question lineup can be collapsed to keep the host screen short.
 - A game's question lineup can be changed until the first question opens. Decide the number of questions in each round before starting, because that number sets its wager range.
 - If you do not need a tiebreaker, leave it unopened after the final.

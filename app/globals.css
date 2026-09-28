@@ -89,6 +89,13 @@ input:focus,select:focus,textarea:focus { border-color:var(--blue); box-shadow:0
 .wagers button:disabled { text-decoration:line-through; opacity:.35; }
 .reviewgroup { margin-top:20px; padding-top:10px; border-top:2px solid var(--line); }
 .reviewgroup h3 { font:700 18px "Space Grotesk",sans-serif; margin:4px 0 12px; }
+.collapsible>summary { cursor:pointer; font:700 24px "Space Grotesk",sans-serif; letter-spacing:-.04em; list-style:none; display:flex; align-items:center; gap:10px; }
+.collapsible>summary::-webkit-details-marker,.reviewgroup>summary::-webkit-details-marker { display:none; }
+.collapsible>summary:after,.reviewgroup>summary:after { content:"⌄"; margin-left:auto; }
+.collapsible[open]>summary:after,.reviewgroup[open]>summary:after { content:"⌃"; }
+.collapsible[open]>summary { margin-bottom:16px; }
+.reviewgroup>summary { cursor:pointer; font:700 18px "Space Grotesk",sans-serif; list-style:none; display:flex; align-items:center; gap:10px; }
+.reviewgroup[open]>summary { margin-bottom:12px; }
 .reviewrow { display:flex; align-items:center; justify-content:space-between; gap:15px; border-top:1px solid var(--line); padding:9px 0; }
 .reviewrow div { min-width:0; overflow-wrap:anywhere; }
 .reviewrow small { display:block; color:#596986; margin-top:4px; }

@@ -31,6 +31,10 @@ function points(q: Row, a: Row): number {
   if (q.stage === "final") return hit ? a.wager || 0 : -(a.wager || 0);
   return hit ? (q.stage === "round1" || q.stage === "round2" ? a.wager || 0 : q.points) : 0;
 }
+function attachedBonus(q: Row, a: Row): number {
+  return q.bonus_prompt && a.bonus_choice !== null && a.bonus_choice !== undefined && q.bonus_target !== null && q.bonus_tolerance !== null &&
+    Math.abs(Number(a.bonus_choice) - Number(q.bonus_target)) <= Number(q.bonus_tolerance) ? 1 : 0;
+}
 async function read(id: string, hostToken = "", teamToken = "") {
   const client = db();
   const game = unwrap(await client.from("games").select("*").eq("id", id).maybeSingle()) as Row | null;
@@ -46,13 +50,23 @@ async function read(id: string, hostToken = "", teamToken = "") {
   const leaderboard = teams.map(t => {
     const own = answers.filter(a => a.team_id === t.id);
     const score = own.filter(a => isHost || game.phase === "reveal" || a.question_id !== current?.id)
-      .reduce((sum, a) => sum + points(questions.find(q => q.id === a.question_id)!, a), t.bonus_points || 0);
+      .reduce((sum, a) => { const q = questions.find(q => q.id === a.question_id)!; return sum + points(q, a) + attachedBonus(q, a); }, t.bonus_points || 0);
     const tie = questions.find(q => q.stage === "tiebreaker");
     const tieAnswer = own.find(a => a.question_id === tie?.id);
     const distance = tie && tieAnswer && game.phase === "reveal" ? Math.abs(Number(tieAnswer.choice) - Number(tie.correct)) : null;
-    return { id: t.id, name: t.name, score, bonusPoints: t.bonus_points || 0, distance };
-  }).sort((a, b) => b.score - a.score || (a.distance ?? Infinity) - (b.distance ?? Infinity) || a.name.localeCompare(b.name));
-  const active = current && { id: current.id, position: questions.indexOf(current) + 1, stage: current.stage, kind: current.kind, category: game.phase === "wager" && !isHost ? "" : current.category, prompt: isHost ? current.prompt : "", options: game.phase === "wager" && !isHost ? [] : current.options, points: current.points, ...(isHost || game.phase === "reveal" ? { correct: current.correct } : {}) };
+    return { id: t.id, name: t.name, score, bonusPoints: t.bonus_points || 0, distance, tiePoint: 0 };
+  });
+  if (current?.stage === "tiebreaker" && game.phase === "reveal" && leaderboard.length > 1) {
+    const highest = Math.max(...leaderboard.map(t => t.score));
+    const tied = leaderboard.filter(t => t.score === highest);
+    if (tied.length > 1) {
+      const closest = Math.min(...tied.map(t => t.distance ?? Infinity));
+      const winners = tied.filter(t => t.distance === closest);
+      if (Number.isFinite(closest) && winners.length === 1) { winners[0].score += 1; winners[0].tiePoint = 1; }
+    }
+  }
+  leaderboard.sort((a, b) => b.score - a.score || (a.distance ?? Infinity) - (b.distance ?? Infinity) || a.name.localeCompare(b.name));
+  const active = current && { id: current.id, position: questions.indexOf(current) + 1, stage: current.stage, kind: current.kind, category: game.phase === "wager" && !isHost ? "" : current.category, prompt: isHost ? current.prompt : "", options: game.phase === "wager" && !isHost ? [] : current.options, bonusPrompt: game.phase === "wager" && !isHost ? "" : current.bonus_prompt, bonusTarget: isHost || game.phase === "reveal" ? current.bonus_target : null, bonusTolerance: game.phase === "wager" && !isHost ? null : current.bonus_tolerance, points: current.points, ...(isHost || game.phase === "reveal" ? { correct: current.correct } : {}) };
   return json({
     id, title: game.title, phase: game.phase, current: active, activeQuestion: game.active_question,
     questions: isHost ? questions.map((q, i) => ({ ...q, position: i + 1 })) : questions.map(q => ({ id: q.id, stage: q.stage })),
@@ -63,7 +77,7 @@ async function read(id: string, hostToken = "", teamToken = "") {
     usedWagers: team && current ? answers.filter(a => a.team_id === team.id && a.stage === current.stage).map(a => a.wager) : [],
     responses: isHost ? answers.map(a => {
       const q = questions.find(q => q.id === a.question_id)!;
-      return { id: a.id, questionId: a.question_id, team: teams.find(t => t.id === a.team_id)?.name, answer: a.choice, wager: a.wager, points: points(q, a), graded: a.manual_points !== null };
+      return { id: a.id, questionId: a.question_id, team: teams.find(t => t.id === a.team_id)?.name, answer: a.choice, wager: a.wager, points: points(q, a), bonusChoice: a.bonus_choice, attachedBonus: attachedBonus(q, a), graded: a.manual_points !== null };
     }) : [],
     isHost, stageNames: stageName
   });
@@ -103,7 +117,7 @@ export async function POST(req: NextRequest) {
       if (!Number.isInteger(amount) || amount < 0) return err("Enter a whole-number wager.");
       const q = unwrap(await client.from("questions").select("*").eq("game_id", id)) as Row[];
       const a = unwrap(await client.from("answers").select("*").eq("team_id", t.id)) as Row[];
-      const score = a.reduce((n, answer) => n + points(q.find(x => x.id === answer.question_id)!, answer), t.bonus_points || 0);
+      const score = a.reduce((n, answer) => { const question = q.find(x => x.id === answer.question_id)!; return n + points(question, answer) + attachedBonus(question, answer); }, t.bonus_points || 0);
       if (amount > Math.max(0, score)) return err(`Your wager cannot exceed your ${score} points.`);
       const prior = unwrap(await client.from("final_wagers").select("amount").eq("game_id", id).eq("team_id", t.id).maybeSingle());
       if (prior) return err("Your final wager is already locked in.");
@@ -122,7 +136,9 @@ export async function POST(req: NextRequest) {
       if (!valid) return err("Complete your answer.");
       const normalized = q.kind === "multiple" ? [...choice].sort((a: number, b: number) => a - b) : q.kind === "short" ? choice.trim() : choice;
       const wager = (q.stage === "round1" || q.stage === "round2") ? Number(b.wager) : null;
-      const result = await client.rpc("submit_trivia_answer", { p_game_id: id, p_team_token: clean(b.team, 100), p_choice: normalized, p_wager: wager });
+      const bonusChoice = b.bonusChoice === null || b.bonusChoice === undefined || b.bonusChoice === "" ? null : Number(b.bonusChoice);
+      if (bonusChoice !== null && (!q.bonus_prompt || !Number.isFinite(bonusChoice) || bonusChoice < 0 || bonusChoice > 1e12)) return err("Enter a valid bonus number.");
+      const result = await client.rpc("submit_trivia_answer_with_bonus", { p_game_id: id, p_team_token: clean(b.team, 100), p_choice: normalized, p_wager: wager, p_bonus_choice: bonusChoice });
       if (result.error) return err(result.error.message.replace(/^.*?ERROR:\s*/i, ""));
       return json({ ok: true });
     }
@@ -160,9 +176,11 @@ export async function POST(req: NextRequest) {
     }
     if (b.action === "add") {
       if (game.phase !== "lobby") return err("Add questions before the game starts.");
-      const stage = clean(b.stage, 20), kind = clean(b.kind, 20), prompt = clean(b.prompt, 300), category = clean(b.category, 80), pts = Number(b.points);
+      const stage = clean(b.stage, 20), kind = clean(b.kind, 20), prompt = clean(b.prompt, 300), category = clean(b.category, 80), bonusPrompt = clean(b.bonusPrompt, 300), pts = Number(b.points);
+      const bonusTarget = bonusPrompt ? Number(b.bonusTarget) : null, bonusTolerance = bonusPrompt ? Number(b.bonusTolerance) : null;
       if (!stages.includes(stage) || !["single","multiple","order","short","number"].includes(kind) || !prompt) return err("Complete the question and stage.");
       if ((stage === "halftime" && kind !== "order") || (stage === "tiebreaker" && kind !== "number") || (stage === "final" && kind === "number")) return err("Halftime uses ordering; the tiebreaker uses a number.");
+      if (bonusPrompt && (String(b.bonusTarget ?? "").trim() === "" || String(b.bonusTolerance ?? "").trim() === "" || !Number.isFinite(bonusTarget) || bonusTarget === null || bonusTarget < 0 || bonusTarget > 1e12 || !Number.isFinite(bonusTolerance) || bonusTolerance === null || bonusTolerance < 0 || bonusTolerance > 1e12)) return err("Enter a valid bonus target and tolerance.");
       const existing = unwrap(await client.from("questions").select("id,position,stage").eq("game_id", id)) as Row[];
       if (["halftime","final","tiebreaker"].includes(stage) && existing.some(q => q.stage === stage)) return err("There can be one question in this special round.");
       if (["round1","round2"].includes(stage) && existing.filter(q => q.stage === stage).length >= 6) return err("Each main round can have up to six questions.");
@@ -177,7 +195,7 @@ export async function POST(req: NextRequest) {
           : Array.isArray(answer) && answer.length >= (kind === "multiple" ? 2 : expectedLength) && answer.every(idx) && new Set(answer).size === answer.length && (kind !== "order" || answer.length === expectedLength));
       if (!valid || !Number.isInteger(pts) || pts < 1 || pts > 100) return err("Complete the answer choices and correct answer.");
       const correct = kind === "multiple" ? [...answer].sort((a: number, b: number) => a - b) : kind === "short" ? answer.trim() : kind === "number" ? Number(answer) : answer;
-      unwrap(await client.from("questions").insert({ game_id: id, stage, position: Math.max(0, ...existing.map(q => q.position)) + 1, category, prompt, kind, options: kind === "short" || kind === "number" ? [] : options, correct, points: stage === "halftime" ? 8 : pts }));
+      unwrap(await client.from("questions").insert({ game_id: id, stage, position: Math.max(0, ...existing.map(q => q.position)) + 1, category, prompt, bonus_prompt: bonusPrompt, bonus_target: bonusTarget, bonus_tolerance: bonusTolerance, kind, options: kind === "short" || kind === "number" ? [] : options, correct, points: stage === "halftime" ? 8 : pts }));
       return json({ ok: true });
     }
     if (b.action === "remove") {
