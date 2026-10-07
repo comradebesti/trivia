@@ -93,6 +93,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const b = await req.json() as Record<string, any>, client = db();
+    if (b.action !== "bankAdd") delete b.bankId;
     if (b.action === "create") {
       const id = crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase(), host = random();
       unwrap(await client.from("games").insert({ id, host_token: host, title: clean(b.title, 80) || "Team Trivia", created_at: Date.now() }).select("id").single());
@@ -174,6 +175,12 @@ export async function POST(req: NextRequest) {
       unwrap(await client.from("teams").update({ bonus_points: total }).eq("id", teamId).eq("game_id", id));
       return json({ ok: true });
     }
+    if (b.action === "bankAdd") {
+      if (!process.env.QUESTION_BANK_PASSWORD || b.bankPassword !== process.env.QUESTION_BANK_PASSWORD) return err("Question Bank password required.", 403);
+      const saved = unwrap(await client.from("trivia_question_bank").select("id,content,status").eq("id", b.bankId).maybeSingle()) as Row | null;
+      if (!saved || saved.status !== "ready") return err("Choose a ready question.");
+      Object.assign(b, saved.content, { action: "add", bankId: saved.id, stage: b.stage || saved.content.stage });
+    }
     if (b.action === "add") {
       if (game.phase !== "lobby") return err("Add questions before the game starts.");
       const stage = clean(b.stage, 20), kind = clean(b.kind, 20), prompt = clean(b.prompt, 300), category = clean(b.category, 80), bonusPrompt = clean(b.bonusPrompt, 300), pts = Number(b.points);
@@ -195,7 +202,7 @@ export async function POST(req: NextRequest) {
           : Array.isArray(answer) && answer.length >= (kind === "multiple" ? 2 : expectedLength) && answer.every(idx) && new Set(answer).size === answer.length && (kind !== "order" || answer.length === expectedLength));
       if (!valid || !Number.isInteger(pts) || pts < 1 || pts > 100) return err("Complete the answer choices and correct answer.");
       const correct = kind === "multiple" ? [...answer].sort((a: number, b: number) => a - b) : kind === "short" ? answer.trim() : kind === "number" ? Number(answer) : answer;
-      unwrap(await client.from("questions").insert({ game_id: id, stage, position: Math.max(0, ...existing.map(q => q.position)) + 1, category, prompt, bonus_prompt: bonusPrompt, bonus_target: bonusTarget, bonus_tolerance: bonusTolerance, kind, options: kind === "short" || kind === "number" ? [] : options, correct, points: stage === "halftime" ? 8 : pts }));
+      unwrap(await client.from("questions").insert({ game_id: id, stage, position: Math.max(0, ...existing.map(q => q.position)) + 1, category, prompt, bonus_prompt: bonusPrompt, bonus_target: bonusTarget, bonus_tolerance: bonusTolerance, kind, options: kind === "short" || kind === "number" ? [] : options, correct, ...(b.bankId ? { bank_id: b.bankId } : {}), points: stage === "halftime" ? 8 : pts }));
       return json({ ok: true });
     }
     if (b.action === "remove") {

@@ -1,6 +1,8 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import QRCode from "qrcode";
+import QuestionBank from "./components/QuestionBank";
+import CompanyBrand from "./components/CompanyBrand";
 type Stage = "round1" | "halftime" | "round2" | "final" | "tiebreaker";
 type Kind = "single" | "multiple" | "order" | "short" | "number";
 type Question = { id: number; position: number; stage: Stage; category: string; prompt: string; bonus_prompt: string; bonus_target: number | null; bonus_tolerance: number | null; bonusPrompt?: string; bonusTarget?: number | null; bonusTolerance?: number | null; options: string[]; kind: Kind; points: number; correct?: number | number[] | string };
@@ -98,7 +100,7 @@ export default function Trivia() {
   const canAnswer = game?.phase === "open" && !answerLocked && !busy && (!isRound || wager !== "");
 
   return <main className="shell">
-    <header className="mast"><div className="brand"><span className="brandmark">✳</span> TEAM <b>TRIVIA</b></div><span className="mastnote">A little friendly competition</span></header>
+    <header className="mast"><CompanyBrand/><span className="mastnote">A little friendly competition</span></header>
     {!id && error && <div className="error" role="alert">{error}</div>}
     {!id ? <section className="intro grid2"><div><div className="eyebrow">READY TO PLAY?</div><h1>Put your heads <em>together.</em></h1><p>One phone per team. Scan the QR or enter the game code here.</p><div className="howworks"><h2>How it works</h2><ol><li>One person joins for your team and enters a team name.</li><li>Answer each question together.</li><li>Choose a wager for each round question. Each number can be used once per round.</li><li>Watch your score as the answers are revealed.</li></ol></div></div>
       <div className="card start"><div className="eyebrow">JOIN THE FUN</div><h2>Join a game</h2><form onSubmit={e => { e.preventDefault(); if (joinCode.length === 8) { setId(joinCode); history.replaceState(null, "", `/?game=${joinCode}`); } }}><label>Game code<input placeholder="8 character code" maxLength={8} value={joinCode} onChange={e => setJoinCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))} /></label><button className="primary" disabled={joinCode.length !== 8}>Join game →</button></form></div>
@@ -108,6 +110,7 @@ export default function Trivia() {
       {!game ? <div className="card">Loading game…</div> : game.isHost ? <div className="gamegrid"><div className="maincol">
         {game.phase === "lobby" && <section className="card"><h2>Game title</h2><label>Shown to teams<input key={game.id} defaultValue={game.title} maxLength={80} onBlur={e => { if (e.target.value.trim() !== game.title) void send("rename", { title: e.target.value }); }} onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }} /></label><p className="muted">Press Enter or click outside to save.</p></section>}
         <section className="card joincard"><div className="sectionhead"><div><div className="eyebrow">GET EVERYONE IN</div><h2>Team join</h2></div><span className="code">{id}</span></div><div className="joincontent">{qr && <img src={qr} alt="QR code to join" width="180" height="180" />}<div><p>One person from each team scans the code. They name their team and answer on that phone.</p><button className="secondary" onClick={() => void copy()}>{copied ? "Copied!" : "Copy join link"}</button><div className="url">{joinUrl}</div></div></div></section>
+        {game.phase === "lobby" && <QuestionBank gameId={id} host={host} onAdded={load}/>}
         {game.phase === "lobby" && <section className="card"><div className="eyebrow">WRITE THE QUIZ</div><h2>Add a question</h2>
           <label>Part of the game<select value={stage} onChange={e => setStageAndOptions(e.target.value as Stage)}>{stages.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}</select></label>
           <label>Question type<select value={kind} disabled={stage === "halftime" || stage === "tiebreaker"} onChange={e => setKind(e.target.value as Kind)}><option value="single">One answer</option><option value="multiple">Select all that apply</option><option value="order">Put in order</option><option value="short">Written answer · host grades</option>{stage === "tiebreaker" && <option value="number">Closest number wins</option>}</select></label>
@@ -154,6 +157,6 @@ export default function Trivia() {
         <section className="card"><div className="eyebrow">THE STANDINGS</div><h2>Leaderboard</h2><ol className="scores">{game.leaderboard.map((t, i) => <li className={t.id === game.myTeam?.id ? "mine" : ""} key={t.id}><span>{String(i + 1).padStart(2, "0")}</span><b>{t.name}</b><strong>{t.score}</strong>{t.tiePoint > 0 && <small>+1 tiebreaker</small>}{t.distance !== null && <small>off by {t.distance}</small>}</li>)}</ol></section>
       </>}</div>}
     </>}
-    <footer>{!id ? <><button type="button" className="footerlink" aria-expanded={showHost} onClick={() => setShowHost(v => !v)}>Hosting the game? {showHost ? "Close host setup" : "Set up a game"}</button>{showHost && <div className="hostsetup"><h2>Host a game</h2><label>Game title<input value={title} maxLength={80} onChange={e => setTitle(e.target.value)} /></label><button className="primary" disabled={busy} onClick={() => void send("create", { title })}>Create game ↗</button></div>}</> : "Refresh whenever you need. Your team stays saved on this device."}</footer>
+    <footer><a className="footerlink" href="/admin/questions">Question Bank</a><br/>{!id ? <><button type="button" className="footerlink" aria-expanded={showHost} onClick={() => setShowHost(v => !v)}>Hosting the game? {showHost ? "Close host setup" : "Set up a game"}</button>{showHost && <div className="hostsetup"><h2>Host a game</h2><label>Game title<input value={title} maxLength={80} onChange={e => setTitle(e.target.value)} /></label><button className="primary" disabled={busy} onClick={() => void send("create", { title })}>Create game ↗</button></div>}</> : "Refresh whenever you need. Your team stays saved on this device."}</footer>
   </main>;
 }
