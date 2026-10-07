@@ -28,6 +28,15 @@ export async function POST(req:NextRequest) {
  const denied=authorize(req); if(denied) return denied;
  try {
  const b=await req.json(), client=db();
+ if(b.action==="delete") {
+ if(typeof b.id!=="string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(b.id)) return reply({error:"Choose a question to delete."},400);
+ // The questions.bank_id foreign key uses ON DELETE SET NULL.
+ // Existing game copies, answers and scores stay intact.
+ const result=await client.from("trivia_question_bank").delete().eq("id",b.id).select("id");
+ check(result.error);
+ if(!result.data?.length) return reply({error:"Question not found. Refresh the bank."},404);
+ return reply({ok:true});
+ }
  if(b.action!=="save") return reply({error:"Unknown action."},400);
  const c=b.content || {}, status=b.status==="ready"?"ready":"draft";
  const stages=["round1","round2","halftime","final","tiebreaker"], kinds=["single","multiple","order","short","number"];
@@ -45,5 +54,5 @@ export async function POST(req:NextRequest) {
  const row={content,status,notes:String(b.notes || "").slice(0,2000),tags:String(b.tags || "").slice(0,300),updated_at:new Date().toISOString()};
  const result=b.id?await client.from("trivia_question_bank").update(row).eq("id",b.id).select("id").single():await client.from("trivia_question_bank").insert(row).select("id").single();
  check(result.error); return reply({ok:true,id:result.data?.id});
- } catch(e){console.error(e);return reply({error:"Could not save this question. Check the migration and try again."},503);}
+ } catch(e){console.error(e);return reply({error:"Could not update the Question Bank. Check the migration and try again."},503);}
 }
