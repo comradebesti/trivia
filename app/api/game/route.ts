@@ -32,6 +32,7 @@ function points(q: Row, a: Row): number {
   return hit ? (q.stage === "round1" || q.stage === "round2" ? a.wager || 0 : q.points) : 0;
 }
 function attachedBonus(q: Row, a: Row): number {
+  if (q.bonus_answer_text) return typeof a.bonus_choice_text === "string" && a.bonus_choice_text.trim().replace(/\\s+/g, " ").toLocaleLowerCase() === String(q.bonus_answer_text).trim().replace(/\\s+/g, " ").toLocaleLowerCase() ? 1 : 0;
   return q.bonus_prompt && a.bonus_choice !== null && a.bonus_choice !== undefined && q.bonus_target !== null && q.bonus_tolerance !== null &&
     Math.abs(Number(a.bonus_choice) - Number(q.bonus_target)) <= Number(q.bonus_tolerance) ? 1 : 0;
 }
@@ -66,7 +67,7 @@ async function read(id: string, hostToken = "", teamToken = "") {
     }
   }
   leaderboard.sort((a, b) => b.score - a.score || (a.distance ?? Infinity) - (b.distance ?? Infinity) || a.name.localeCompare(b.name));
-  const active = current && { id: current.id, position: questions.indexOf(current) + 1, stage: current.stage, kind: current.kind, category: game.phase === "wager" && !isHost ? "" : current.category, prompt: isHost ? current.prompt : "", options: game.phase === "wager" && !isHost ? [] : current.options, bonusPrompt: game.phase === "wager" && !isHost ? "" : current.bonus_prompt, bonusTarget: isHost || game.phase === "reveal" ? current.bonus_target : null, bonusTolerance: game.phase === "wager" && !isHost ? null : current.bonus_tolerance, points: current.points, ...(isHost || game.phase === "reveal" ? { correct: current.correct } : {}) };
+  const active = current && { id: current.id, position: questions.indexOf(current) + 1, stage: current.stage, kind: current.kind, category: game.phase === "wager" && !isHost ? "" : current.category, prompt: isHost ? current.prompt : "", options: game.phase === "wager" && !isHost ? [] : current.options, bonusPrompt: game.phase === "wager" && !isHost ? "" : current.bonus_prompt, bonusTarget: isHost || game.phase === "reveal" ? current.bonus_target : null, bonusTolerance: game.phase === "wager" && !isHost ? null : current.bonus_tolerance, bonusType: current.bonus_answer_text ? "text" : "number", bonusAnswerText: isHost || game.phase === "reveal" ? current.bonus_answer_text : null, points: current.points, ...(isHost || game.phase === "reveal" ? { correct: current.correct } : {}) };
   return json({
     id, title: game.title, phase: game.phase, current: active, activeQuestion: game.active_question,
     questions: isHost ? questions.map((q, i) => ({ ...q, position: i + 1 })) : questions.map(q => ({ id: q.id, stage: q.stage })),
@@ -77,7 +78,7 @@ async function read(id: string, hostToken = "", teamToken = "") {
     usedWagers: team && current ? answers.filter(a => a.team_id === team.id && a.stage === current.stage).map(a => a.wager) : [],
     responses: isHost ? answers.map(a => {
       const q = questions.find(q => q.id === a.question_id)!;
-      return { id: a.id, questionId: a.question_id, team: teams.find(t => t.id === a.team_id)?.name, answer: a.choice, wager: a.wager, points: points(q, a), bonusChoice: a.bonus_choice, attachedBonus: attachedBonus(q, a), graded: a.manual_points !== null };
+      return { id: a.id, questionId: a.question_id, team: teams.find(t => t.id === a.team_id)?.name, answer: a.choice, wager: a.wager, points: points(q, a), bonusChoice: a.bonus_choice, bonusChoiceText: a.bonus_choice_text, attachedBonus: attachedBonus(q, a), graded: a.manual_points !== null };
     }) : [],
     isHost, stageNames: stageName
   });
@@ -137,9 +138,11 @@ export async function POST(req: NextRequest) {
       if (!valid) return err("Complete your answer.");
       const normalized = q.kind === "multiple" ? [...choice].sort((a: number, b: number) => a - b) : q.kind === "short" ? choice.trim() : choice;
       const wager = (q.stage === "round1" || q.stage === "round2") ? Number(b.wager) : null;
+      const bonusChoiceText = typeof b.bonusChoiceText === "string" && b.bonusChoiceText.trim() ? clean(b.bonusChoiceText, 300) : null;
+      if (bonusChoiceText !== null && (!q.bonus_prompt || !q.bonus_answer_text)) return err("A written bonus is not available for this question.");
       const bonusChoice = b.bonusChoice === null || b.bonusChoice === undefined || b.bonusChoice === "" ? null : Number(b.bonusChoice);
-      if (bonusChoice !== null && (!q.bonus_prompt || !Number.isFinite(bonusChoice) || bonusChoice < 0 || bonusChoice > 1e12)) return err("Enter a valid bonus number.");
-      const result = await client.rpc("submit_trivia_answer_with_bonus", { p_game_id: id, p_team_token: clean(b.team, 100), p_choice: normalized, p_wager: wager, p_bonus_choice: bonusChoice });
+      if (bonusChoice !== null && (!!q.bonus_answer_text || !q.bonus_prompt || !Number.isFinite(bonusChoice) || bonusChoice < 0 || bonusChoice > 1e12)) return err("Enter a valid bonus number.");
+      const result = await client.rpc("submit_trivia_answer_with_bonus", { p_game_id: id, p_team_token: clean(b.team, 100), p_choice: normalized, p_wager: wager, p_bonus_choice: bonusChoice, p_bonus_choice_text: bonusChoiceText });
       if (result.error) return err(result.error.message.replace(/^.*?ERROR:\s*/i, ""));
       return json({ ok: true });
     }
@@ -184,10 +187,13 @@ export async function POST(req: NextRequest) {
     if (b.action === "add") {
       if (game.phase !== "lobby") return err("Add questions before the game starts.");
       const stage = clean(b.stage, 20), kind = clean(b.kind, 20), prompt = clean(b.prompt, 300), category = clean(b.category, 80), bonusPrompt = clean(b.bonusPrompt, 300), pts = Number(b.points);
-      const bonusTarget = bonusPrompt ? Number(b.bonusTarget) : null, bonusTolerance = bonusPrompt ? Number(b.bonusTolerance) : null;
+      const bonusType = b.bonusType === "text" ? "text" : "number";
+      const bonusAnswerText = bonusPrompt && bonusType === "text" ? clean(b.bonusAnswerText, 300) : null;
+      const bonusTarget = bonusPrompt && bonusType === "number" ? Number(b.bonusTarget) : null, bonusTolerance = bonusPrompt && bonusType === "number" ? Number(b.bonusTolerance) : null;
       if (!stages.includes(stage) || !["single","multiple","order","short","number"].includes(kind) || !prompt) return err("Complete the question and stage.");
       if ((stage === "halftime" && kind !== "order") || (stage === "tiebreaker" && kind !== "number") || (stage === "final" && kind === "number")) return err("Halftime uses ordering; the tiebreaker uses a number.");
-      if (bonusPrompt && (String(b.bonusTarget ?? "").trim() === "" || String(b.bonusTolerance ?? "").trim() === "" || !Number.isFinite(bonusTarget) || bonusTarget === null || bonusTarget < 0 || bonusTarget > 1e12 || !Number.isFinite(bonusTolerance) || bonusTolerance === null || bonusTolerance < 0 || bonusTolerance > 1e12)) return err("Enter a valid bonus target and tolerance.");
+      if (bonusPrompt && bonusType === "text" && !bonusAnswerText) return err("Enter the correct written bonus answer.");
+      if (bonusPrompt && bonusType === "number" && (String(b.bonusTarget ?? "").trim() === "" || String(b.bonusTolerance ?? "").trim() === "" || !Number.isFinite(bonusTarget) || bonusTarget === null || bonusTarget < 0 || bonusTarget > 1e12 || !Number.isFinite(bonusTolerance) || bonusTolerance === null || bonusTolerance < 0 || bonusTolerance > 1e12)) return err("Enter a valid bonus target and tolerance.");
       const existing = unwrap(await client.from("questions").select("id,position,stage").eq("game_id", id)) as Row[];
       if (["halftime","final","tiebreaker"].includes(stage) && existing.some(q => q.stage === stage)) return err("There can be one question in this special round.");
       if (["round1","round2"].includes(stage) && existing.filter(q => q.stage === stage).length >= 6) return err("Each main round can have up to six questions.");
@@ -202,7 +208,7 @@ export async function POST(req: NextRequest) {
           : Array.isArray(answer) && answer.length >= (kind === "multiple" ? 2 : expectedLength) && answer.every(idx) && new Set(answer).size === answer.length && (kind !== "order" || answer.length === expectedLength));
       if (!valid || !Number.isInteger(pts) || pts < 1 || pts > 100) return err("Complete the answer choices and correct answer.");
       const correct = kind === "multiple" ? [...answer].sort((a: number, b: number) => a - b) : kind === "short" ? answer.trim() : kind === "number" ? Number(answer) : answer;
-      unwrap(await client.from("questions").insert({ game_id: id, stage, position: Math.max(0, ...existing.map(q => q.position)) + 1, category, prompt, bonus_prompt: bonusPrompt, bonus_target: bonusTarget, bonus_tolerance: bonusTolerance, kind, options: kind === "short" || kind === "number" ? [] : options, correct, ...(b.bankId ? { bank_id: b.bankId } : {}), points: stage === "halftime" ? 8 : pts }));
+      unwrap(await client.from("questions").insert({ game_id: id, stage, position: Math.max(0, ...existing.map(q => q.position)) + 1, category, prompt, bonus_prompt: bonusPrompt, bonus_target: bonusTarget, bonus_tolerance: bonusTolerance, bonus_answer_text: bonusAnswerText, kind, options: kind === "short" || kind === "number" ? [] : options, correct, ...(b.bankId ? { bank_id: b.bankId } : {}), points: stage === "halftime" ? 8 : pts }));
       return json({ ok: true });
     }
     if (b.action === "remove") {

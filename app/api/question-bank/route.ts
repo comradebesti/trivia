@@ -41,14 +41,15 @@ export async function POST(req:NextRequest) {
  const c=b.content || {}, status=b.status==="ready"?"ready":"draft";
  const stages=["round1","round2","halftime","final","tiebreaker"], kinds=["single","multiple","order","short","number"];
  if(!stages.includes(c.stage)||!kinds.includes(c.kind)) return reply({error:"Choose a stage and question type."},400);
- const content={stage:c.stage,kind:c.kind,prompt:String(c.prompt || "").trim().slice(0,300),category:String(c.category || "").trim().slice(0,80),options:Array.isArray(c.options)?c.options.slice(0,8).map((x:unknown)=>String(x).trim().slice(0,140)):[],correct:c.correct??null,points:10,bonusPrompt:String(c.bonusPrompt || "").trim().slice(0,300),bonusTarget:c.bonusTarget,bonusTolerance:c.bonusTolerance};
+ const content={stage:c.stage,kind:c.kind,prompt:String(c.prompt || "").trim().slice(0,300),category:String(c.category || "").trim().slice(0,80),options:Array.isArray(c.options)?c.options.slice(0,8).map((x:unknown)=>String(x).trim().slice(0,140)):[],correct:c.correct??null,points:10,bonusPrompt:String(c.bonusPrompt || "").trim().slice(0,300),bonusTarget:c.bonusTarget,bonusTolerance:c.bonusTolerance,bonusType:c.bonusType==='text'?'text':'number',bonusAnswerText:String(c.bonusAnswerText||'').trim().slice(0,300)};
  if(status==="ready") {
  const n=content.stage==="halftime"?8:4, a=content.correct;
  const idx=(x:unknown)=>Number.isInteger(x)&&Number(x)>=0&&Number(x)<n;
  const valid=content.kind==="short"?typeof a==="string"&&a.trim().length>0:content.kind==="number"?typeof a==="number"&&Number.isFinite(a)&&a>=0&&a<=1e12:content.options.length===n&&content.options.every((x:string)=>!!x)&&(content.kind==="single"?idx(a):Array.isArray(a)&&a.every(idx)&&new Set(a).size===a.length&&(content.kind==="multiple"?a.length>=2:a.length===n));
  if(!content.prompt || !valid) return reply({error:"Complete the question, choices and correct answer, or save as a draft."},400);
  if((content.stage==="halftime"&&content.kind!=="order")||(content.stage==="tiebreaker"&&content.kind!=="number")||(content.stage==="final"&&content.kind==="number")) return reply({error:"Halftime uses ordering. Tiebreaker uses a number. Final uses a nonnumeric type."},400);
- if(content.bonusPrompt && [content.bonusTarget,content.bonusTolerance].some(x=>typeof x!=="number"||!Number.isFinite(x)||x<0||x>1e12)) return reply({error:"Complete the bonus target and tolerance."},400);
+ if(content.bonusPrompt && content.bonusType==='text' && !content.bonusAnswerText) return reply({error:'Enter the correct written bonus answer.'},400);
+ if(content.bonusPrompt && content.bonusType==='number' && [content.bonusTarget,content.bonusTolerance].some(x=>typeof x!=="number"||!Number.isFinite(x)||x<0||x>1e12)) return reply({error:"Complete the bonus target and tolerance."},400);
  if(content.kind==="multiple") content.correct=[...a].sort((x:number,y:number)=>x-y);
  }
  const row={content,status,notes:String(b.notes || "").slice(0,2000),tags:String(b.tags || "").slice(0,300),updated_at:new Date().toISOString()};
