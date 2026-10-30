@@ -26,13 +26,17 @@ function exact(q: Row, a: Row) {
 function points(q: Row, a: Row): number {
   if (a.manual_points !== null && a.manual_points !== undefined) return a.manual_points;
   if (q.stage === "tiebreaker") return 0;
+  if (q.stage === "halftime" && q.kind === "image" && Array.isArray(a.choice) && Array.isArray(q.correct)) {
+    const normalize = (x: unknown) => String(x ?? "").trim().replace(/\s+/g, " ").toLocaleLowerCase();
+    return a.choice.reduce((sum: number, value: unknown, i: number) => sum + (normalize(value) !== "" && normalize(value) === normalize(q.correct[i]) ? 1 : 0), 0);
+  }
   if (q.stage === "halftime" && q.kind === "order" && Array.isArray(a.choice)) return a.choice.filter((x: number, i: number) => x === q.correct[i]).length;
   const hit = exact(q, a);
   if (q.stage === "final") return hit ? a.wager || 0 : -(a.wager || 0);
   return hit ? (q.stage === "round1" || q.stage === "round2" ? a.wager || 0 : q.points) : 0;
 }
 function attachedBonus(q: Row, a: Row): number {
-  if (q.bonus_answer_text) return typeof a.bonus_choice_text === "string" && a.bonus_choice_text.trim().replace(/\\s+/g, " ").toLocaleLowerCase() === String(q.bonus_answer_text).trim().replace(/\\s+/g, " ").toLocaleLowerCase() ? 1 : 0;
+  if (q.bonus_answer_text) return typeof a.bonus_choice_text === "string" && a.bonus_choice_text.trim().replace(/\s+/g, " ").toLocaleLowerCase() === String(q.bonus_answer_text).trim().replace(/\s+/g, " ").toLocaleLowerCase() ? 1 : 0;
   return q.bonus_prompt && a.bonus_choice !== null && a.bonus_choice !== undefined && q.bonus_target !== null && q.bonus_tolerance !== null &&
     Math.abs(Number(a.bonus_choice) - Number(q.bonus_target)) <= Number(q.bonus_tolerance) ? 1 : 0;
 }
@@ -67,7 +71,7 @@ async function read(id: string, hostToken = "", teamToken = "") {
     }
   }
   leaderboard.sort((a, b) => b.score - a.score || (a.distance ?? Infinity) - (b.distance ?? Infinity) || a.name.localeCompare(b.name));
-  const active = current && { id: current.id, position: questions.indexOf(current) + 1, stage: current.stage, kind: current.kind, category: game.phase === "wager" && !isHost ? "" : current.category, prompt: isHost ? current.prompt : "", options: game.phase === "wager" && !isHost ? [] : current.options, bonusPrompt: game.phase === "wager" && !isHost ? "" : current.bonus_prompt, bonusTarget: isHost || game.phase === "reveal" ? current.bonus_target : null, bonusTolerance: game.phase === "wager" && !isHost ? null : current.bonus_tolerance, bonusType: current.bonus_answer_text ? "text" : "number", bonusAnswerText: isHost || game.phase === "reveal" ? current.bonus_answer_text : null, points: current.points, ...(isHost || game.phase === "reveal" ? { correct: current.correct } : {}) };
+  const active = current && { id: current.id, position: questions.indexOf(current) + 1, stage: current.stage, kind: current.kind, category: game.phase === "wager" && !isHost ? "" : current.category, prompt: isHost ? current.prompt : "", options: game.phase === "wager" && !isHost ? [] : current.kind === "image" && !isHost ? current.options.map(() => "") : current.options, bonusPrompt: game.phase === "wager" && !isHost ? "" : current.bonus_prompt, bonusTarget: isHost || game.phase === "reveal" ? current.bonus_target : null, bonusTolerance: game.phase === "wager" && !isHost ? null : current.bonus_tolerance, bonusType: current.bonus_answer_text ? "text" : "number", bonusAnswerText: isHost || game.phase === "reveal" ? current.bonus_answer_text : null, points: current.points, ...(isHost || game.phase === "reveal" ? { correct: current.correct } : {}) };
   return json({
     id, title: game.title, phase: game.phase, current: active, activeQuestion: game.active_question,
     questions: isHost ? questions.map((q, i) => ({ ...q, position: i + 1 })) : questions.map(q => ({ id: q.id, stage: q.stage })),
@@ -131,12 +135,13 @@ export async function POST(req: NextRequest) {
       const q = unwrap(await client.from("questions").select("*").eq("id", game.active_question).eq("game_id", id).single()) as Row;
       const choice = b.choice, n = q.options.length;
       const index = (x: unknown) => Number.isInteger(x) && Number(x) >= 0 && Number(x) < n;
-      const valid = q.kind === "short" ? typeof choice === "string" && choice.trim().length > 0 && choice.length <= 300
+      const valid = q.kind === "image" ? Array.isArray(choice) && choice.length === n && choice.every((x: unknown) => typeof x === "string" && x.length <= 300)
+        : q.kind === "short" ? typeof choice === "string" && choice.trim().length > 0 && choice.length <= 300
         : q.kind === "number" ? typeof choice === "number" && Number.isFinite(choice) && choice >= 0 && choice <= 1e12
         : q.kind === "single" ? index(choice)
         : Array.isArray(choice) && choice.length > 0 && choice.every(index) && new Set(choice).size === choice.length && (q.kind !== "order" || choice.length === n);
       if (!valid) return err("Complete your answer.");
-      const normalized = q.kind === "multiple" ? [...choice].sort((a: number, b: number) => a - b) : q.kind === "short" ? choice.trim() : choice;
+      const normalized = q.kind === "image" ? (choice as string[]).map(x => x.trim()) : q.kind === "multiple" ? [...choice].sort((a: number, b: number) => a - b) : q.kind === "short" ? choice.trim() : choice;
       const wager = (q.stage === "round1" || q.stage === "round2") ? Number(b.wager) : null;
       const bonusChoiceText = typeof b.bonusChoiceText === "string" && b.bonusChoiceText.trim() ? clean(b.bonusChoiceText, 300) : null;
       if (bonusChoiceText !== null && (!q.bonus_prompt || !q.bonus_answer_text)) return err("A written bonus is not available for this question.");
@@ -161,7 +166,7 @@ export async function POST(req: NextRequest) {
       if (!entry) return err("Answer not found.");
       const q = unwrap(await client.from("questions").select("id,game_id,stage,points").eq("id", entry.question_id).eq("game_id", id).maybeSingle()) as Row | null;
       if (!q) return err("Answer not found.");
-      const max = q.stage === "round1" || q.stage === "round2" || q.stage === "final" ? entry.wager || 0 : q.stage === "halftime" ? 8 : 0;
+      const max = q.stage === "round1" || q.stage === "round2" || q.stage === "final" ? entry.wager || 0 : q.stage === "halftime" ? q.points : 0;
       const min = q.stage === "final" ? -max : 0;
       if (amount < min || amount > max) return err(`Points for this answer must be between ${min} and ${max}. Use bonus points for anything extra.`);
       const result = await client.from("answers").update({ manual_points: amount }).eq("id", answerId).select("id");
@@ -190,25 +195,26 @@ export async function POST(req: NextRequest) {
       const bonusType = b.bonusType === "text" ? "text" : "number";
       const bonusAnswerText = bonusPrompt && bonusType === "text" ? clean(b.bonusAnswerText, 300) : null;
       const bonusTarget = bonusPrompt && bonusType === "number" ? Number(b.bonusTarget) : null, bonusTolerance = bonusPrompt && bonusType === "number" ? Number(b.bonusTolerance) : null;
-      if (!stages.includes(stage) || !["single","multiple","order","short","number"].includes(kind) || !prompt) return err("Complete the question and stage.");
-      if ((stage === "halftime" && kind !== "order") || (stage === "tiebreaker" && kind !== "number") || (stage === "final" && kind === "number")) return err("Halftime uses ordering; the tiebreaker uses a number.");
+      if (!stages.includes(stage) || !["single","multiple","order","short","number","image"].includes(kind) || !prompt) return err("Complete the question and stage.");
+      if ((kind === "image" && stage !== "halftime") || (kind === "image" && stage !== "halftime") || (stage === "halftime" && kind !== "image") || (stage === "tiebreaker" && kind !== "number") || (stage === "final" && kind === "number")) return err("Halftime uses image identification; the tiebreaker uses a number.");
       if (bonusPrompt && bonusType === "text" && !bonusAnswerText) return err("Enter the correct written bonus answer.");
       if (bonusPrompt && bonusType === "number" && (String(b.bonusTarget ?? "").trim() === "" || String(b.bonusTolerance ?? "").trim() === "" || !Number.isFinite(bonusTarget) || bonusTarget === null || bonusTarget < 0 || bonusTarget > 1e12 || !Number.isFinite(bonusTolerance) || bonusTolerance === null || bonusTolerance < 0 || bonusTolerance > 1e12)) return err("Enter a valid bonus target and tolerance.");
       const existing = unwrap(await client.from("questions").select("id,position,stage").eq("game_id", id)) as Row[];
       if (["halftime","final","tiebreaker"].includes(stage) && existing.some(q => q.stage === stage)) return err("There can be one question in this special round.");
       if (["round1","round2"].includes(stage) && existing.filter(q => q.stage === stage).length >= 6) return err("Each main round can have up to six questions.");
       const options = Array.isArray(b.options) ? b.options.map((x: unknown) => clean(x, 140)) : [];
-      const expectedLength = stage === "halftime" ? 8 : 4;
+      const expectedLength = 4;
       const idx = (x: unknown) => Number.isInteger(x) && Number(x) >= 0 && Number(x) < options.length;
       const answer = b.correct;
-      const valid = kind === "short" ? typeof answer === "string" && answer.trim().length > 0
+      const valid = kind === "image" ? stage === "halftime" && options.length > 0 && options.every((x: string) => !!x) && Array.isArray(answer) && answer.length === options.length && answer.every((x: unknown) => typeof x === "string" && x.trim().length > 0 && x.length <= 140)
+        : kind === "short" ? typeof answer === "string" && answer.trim().length > 0
         : kind === "number" ? Number.isFinite(Number(answer)) && Number(answer) >= 0
         : options.length === expectedLength && options.every((x: string) => !!x) && (
           kind === "single" ? idx(answer)
           : Array.isArray(answer) && answer.length >= (kind === "multiple" ? 2 : expectedLength) && answer.every(idx) && new Set(answer).size === answer.length && (kind !== "order" || answer.length === expectedLength));
-      if (!valid || !Number.isInteger(pts) || pts < 1 || pts > 100) return err("Complete the answer choices and correct answer.");
-      const correct = kind === "multiple" ? [...answer].sort((a: number, b: number) => a - b) : kind === "short" ? answer.trim() : kind === "number" ? Number(answer) : answer;
-      unwrap(await client.from("questions").insert({ game_id: id, stage, position: Math.max(0, ...existing.map(q => q.position)) + 1, category, prompt, bonus_prompt: bonusPrompt, bonus_target: bonusTarget, bonus_tolerance: bonusTolerance, bonus_answer_text: bonusAnswerText, kind, options: kind === "short" || kind === "number" ? [] : options, correct, ...(b.bankId ? { bank_id: b.bankId } : {}), points: stage === "halftime" ? 8 : pts }));
+      if (!valid || !Number.isInteger(pts) || pts < 1 || (stage !== "halftime" && pts > 100) || (stage === "halftime" && pts !== options.length)) return err("Complete the answer choices and correct answer.");
+      const correct = kind === "image" ? (answer as string[]).map(x => x.trim()) : kind === "multiple" ? [...answer].sort((a: number, b: number) => a - b) : kind === "short" ? answer.trim() : kind === "number" ? Number(answer) : answer;
+      unwrap(await client.from("questions").insert({ game_id: id, stage, position: Math.max(0, ...existing.map(q => q.position)) + 1, category, prompt, bonus_prompt: bonusPrompt, bonus_target: bonusTarget, bonus_tolerance: bonusTolerance, bonus_answer_text: bonusAnswerText, kind, options: kind === "short" || kind === "number" ? [] : options, correct, ...(b.bankId ? { bank_id: b.bankId } : {}), points: stage === "halftime" ? options.length : pts }));
       return json({ ok: true });
     }
     if (b.action === "remove") {
