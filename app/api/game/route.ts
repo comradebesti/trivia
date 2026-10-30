@@ -201,7 +201,7 @@ export async function POST(req: NextRequest) {
       if (bonusPrompt && bonusType === "number" && (String(b.bonusTarget ?? "").trim() === "" || String(b.bonusTolerance ?? "").trim() === "" || !Number.isFinite(bonusTarget) || bonusTarget === null || bonusTarget < 0 || bonusTarget > 1e12 || !Number.isFinite(bonusTolerance) || bonusTolerance === null || bonusTolerance < 0 || bonusTolerance > 1e12)) return err("Enter a valid bonus target and tolerance.");
       const existing = unwrap(await client.from("questions").select("id,position,stage").eq("game_id", id)) as Row[];
       if (["halftime","final","tiebreaker"].includes(stage) && existing.some(q => q.stage === stage)) return err("There can be one question in this special round.");
-      if (["round1","round2"].includes(stage) && existing.filter(q => q.stage === stage).length >= 6) return err("Each main round can have up to six questions.");
+      
       const options = Array.isArray(b.options) ? b.options.map((x: unknown) => clean(x, 140)) : [];
       const expectedLength = 4;
       const idx = (x: unknown) => Number.isInteger(x) && Number(x) >= 0 && Number(x) < options.length;
